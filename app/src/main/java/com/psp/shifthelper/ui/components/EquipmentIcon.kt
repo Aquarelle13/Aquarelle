@@ -18,6 +18,7 @@ import com.psp.shifthelper.ui.theme.*
 @Composable
 fun EquipmentIcon(
     code: String,
+    name: String? = null,
     running: Boolean,
     modifier: Modifier = Modifier,
     worker: String? = null
@@ -62,15 +63,26 @@ fun EquipmentIcon(
                     fontWeight = FontWeight.Black,
                     color = if (running) Foreground else MutedForeground,
                     textAlign = TextAlign.Center,
-                    lineHeight = 13.sp,
-                    maxLines = 2
+                    lineHeight = 11.sp,
+                    maxLines = 1
                 )
+
+                // 장비 이름 (코드가 짧을 때 보조 정보)
+                if (name != null && name != code) {
+                    Text(
+                        text = name,
+                        fontSize = 7.sp,
+                        color = MutedForeground,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center
+                    )
+                }
 
                 // 작업자 (하단 작은 텍스트)
                 if (worker != null && running) {
                     Text(
                         text = worker,
-                        fontSize = 8.sp,
+                        fontSize = 9.sp,
                         color = AccentBlue,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1

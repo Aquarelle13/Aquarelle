@@ -132,6 +132,7 @@ private fun DraggableItem(
     ) {
         EquipmentIcon(
             code = equipment.code,
+            name = equipment.name,
             running = equipment.isRunning,
             worker = workerName,
             modifier = Modifier.fillMaxSize()

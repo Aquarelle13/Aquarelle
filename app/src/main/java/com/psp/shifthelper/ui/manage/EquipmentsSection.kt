@@ -112,17 +112,38 @@ fun EquipmentSettingsContent(
     Column(
         modifier = Modifier
             .padding(16.dp)
+            .heightIn(max = 500.dp)
             .verticalScroll(rememberScrollState()), 
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(modifier = Modifier.size(8.dp).background(if (equipment.isRunning) StatusOk else Border, RoundedCornerShape(2.dp)))
-                Text(text = "${equipment.code} 설정", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Foreground)
+                Text(text = "장비 정보 수정", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Foreground)
             }
             IconButton(onClick = onClose, modifier = Modifier.size(24.dp)) {
                 Text("닫기", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
+        }
+
+        // 0. 장비 코드 및 이름 편집
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = equipment.code,
+                onValueChange = { onUpdate(equipment.copy(code = it)) },
+                label = { Text("장비 코드", fontSize = 10.sp) },
+                modifier = Modifier.weight(1f),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = equipment.name,
+                onValueChange = { onUpdate(equipment.copy(name = it)) },
+                label = { Text("장비 이름 (관리용)", fontSize = 10.sp) },
+                modifier = Modifier.weight(1.5f),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                singleLine = true
+            )
         }
 
         HorizontalDivider(color = Border, thickness = 0.5.dp)

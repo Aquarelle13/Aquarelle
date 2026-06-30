@@ -44,6 +44,7 @@ fun OcrResultDialog(
     imageUri: Uri?,
     allEquipments: List<Equipment>,
     onDismiss: () -> Unit,
+    onLearnAlias: (String, Long) -> Unit,
     onUpdateState: (Long, Boolean) -> Unit
 ) {
     Dialog(
@@ -60,6 +61,7 @@ fun OcrResultDialog(
                 imageUri = imageUri,
                 allEquipments = allEquipments,
                 onDismiss = onDismiss,
+                onLearnAlias = onLearnAlias,
                 onUpdateState = onUpdateState
             )
         }
@@ -72,6 +74,7 @@ fun MainConfirmationContent(
     imageUri: Uri?,
     allEquipments: List<Equipment>,
     onDismiss: () -> Unit,
+    onLearnAlias: (String, Long) -> Unit,
     onUpdateState: (Long, Boolean) -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp).fillMaxSize()) {
@@ -103,6 +106,20 @@ fun MainConfirmationContent(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(text = equip?.code ?: "Unknown", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                 if (detail?.partNumber != null) Text("품번: ${detail.partNumber}", fontSize = 12.sp, color = AccentBlue, fontWeight = FontWeight.Bold)
+                                
+                                val rawText = result.matchedLines[id]
+                                if (rawText != null) {
+                                    TextButton(
+                                        onClick = { onLearnAlias(rawText, id) },
+                                        contentPadding = PaddingValues(0.dp),
+                                        modifier = Modifier.height(24.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("별칭 학습: $rawText", fontSize = 10.sp, color = AccentBlue)
+                                    }
+                                }
+
                                 if (detail?.memo != null) Text(detail.memo, fontSize = 10.sp, color = MutedForeground, lineHeight = 12.sp)
                             }
                             

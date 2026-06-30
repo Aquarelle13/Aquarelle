@@ -503,7 +503,13 @@ fun DraggableEquipment(
                 shape = RoundedCornerShape(8.dp)
             ).background(Surface, RoundedCornerShape(8.dp))
         ) {
-            com.psp.shifthelper.ui.components.EquipmentIcon(equipment.code, equipment.isRunning, Modifier.fillMaxSize(), if (equipment.isRunning) "작업중" else null)
+            com.psp.shifthelper.ui.components.EquipmentIcon(
+                code = equipment.code,
+                name = equipment.name,
+                running = equipment.isRunning,
+                modifier = Modifier.fillMaxSize(),
+                worker = if (equipment.isRunning) "작업중" else null
+            )
         }
         
         if (isEditMode && isSelected) {

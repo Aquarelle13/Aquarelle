@@ -65,6 +65,18 @@ fun OcrSettingsContent(
         }
     }
 
+    // OCR 성공 시 자동 목록 추가 (SideEffect 사용)
+    LaunchedEffect(uiState) {
+        if (showRegistrationDialog && uiState is OcrUiState.Success && registrationItems.isEmpty()) {
+            val result = (uiState as OcrUiState.Success).result
+            // y축 순서로 정렬하여 인식된 모든 텍스트 라인을 자동으로 리스트에 추가
+            val sortedLines = result.allDetectedLines.sortedBy { it.boundingBox.top }
+            sortedLines.forEach { line ->
+                registrationItems.add(RegistrationItem(rawText = line.text))
+            }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionLabel("03", "장비 매칭 (OCR 학습)")
         
@@ -248,18 +260,44 @@ fun MatchingItemRow(
     if (showPicker) {
         Dialog(onDismissRequest = { showPicker = false }) {
             Surface(shape = RoundedCornerShape(16.dp), color = Surface) {
-                Column(modifier = Modifier.padding(16.dp).heightIn(max = 400.dp)) {
-                    Text("장비 선택", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                Column(modifier = Modifier.padding(16.dp).heightIn(max = 500.dp)) {
+                    Text("장비 선택 (알파벳/번호 순)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                    
+                    val sortedEquipments = remember(allEquipments) {
+                        allEquipments.sortedBy { it.code }
+                    }
+
                     LazyColumn {
-                        items(allEquipments) { equip ->
-                            Text(
-                                text = equip.code,
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    onEquipSelected(equip.id)
-                                    showPicker = false
-                                }.padding(vertical = 12.dp, horizontal = 8.dp),
-                                fontSize = 14.sp
-                            )
+                        items(sortedEquipments) { equip ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onEquipSelected(equip.id)
+                                        showPicker = false
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(if (equip.isRunning) StatusOk else Border, RoundedCornerShape(2.dp))
+                                )
+                                Text(
+                                    text = equip.code,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Foreground
+                                )
+                                Text(
+                                    text = "(${equip.name})",
+                                    fontSize = 12.sp,
+                                    color = MutedForeground
+                                )
+                            }
+                            HorizontalDivider(color = Border.copy(alpha = 0.5f), thickness = 0.5.dp)
                         }
                     }
                 }

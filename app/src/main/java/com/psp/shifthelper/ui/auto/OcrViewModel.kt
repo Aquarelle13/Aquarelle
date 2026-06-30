@@ -89,9 +89,9 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
         _selectedImageUri.value = null
     }
 
-    fun saveTemplate(name: String, equipmentIds: List<Long>) {
+    fun saveTemplate(name: String, equipmentIds: List<Long>, id: Long = 0) {
         viewModelScope.launch {
-            templateDao.upsert(OcrTemplate(name = name, equipmentIds = equipmentIds))
+            templateDao.upsert(OcrTemplate(id = id, name = name, equipmentIds = equipmentIds))
         }
     }
 

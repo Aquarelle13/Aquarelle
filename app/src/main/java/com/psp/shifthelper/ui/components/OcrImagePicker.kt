@@ -40,10 +40,10 @@ fun OcrImagePicker(
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val density = LocalDensity.current
 
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Column(modifier = Modifier.fillMaxSize().background(Background)) {
         Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, contentDescription = null, tint = Color.White) }
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Foreground)
+            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, contentDescription = null, tint = Foreground) }
         }
 
         BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds()) {

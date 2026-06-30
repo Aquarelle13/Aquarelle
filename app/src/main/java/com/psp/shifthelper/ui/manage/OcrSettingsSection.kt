@@ -48,6 +48,7 @@ fun OcrSettingsContent(
     
     var showRegistrationDialog by remember { mutableStateOf(false) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var editingTemplateId by remember { mutableLongStateOf(0L) }
     
     // 등록 중인 아이템 목록
     val registrationItems = remember { mutableStateListOf<RegistrationItem>() }
@@ -61,6 +62,8 @@ fun OcrSettingsContent(
             selectedImageUri = it
             ocrViewModel.processImage(it)
             registrationItems.clear()
+            editingTemplateId = 0L
+            newTemplateName = ""
             showRegistrationDialog = true
         }
     }
@@ -115,6 +118,16 @@ fun OcrSettingsContent(
                 items(templates) { template ->
                     TemplateItem(
                         template = template,
+                        onClick = {
+                            editingTemplateId = template.id
+                            newTemplateName = template.name
+                            registrationItems.clear()
+                            template.equipmentIds.forEach { id ->
+                                val equip = allEquipments.find { it.id == id }
+                                registrationItems.add(RegistrationItem(rawText = equip?.code ?: "Unknown", equipmentId = id))
+                            }
+                            showRegistrationDialog = true
+                        },
                         onDelete = { ocrViewModel.deleteTemplate(template) }
                     )
                 }
@@ -123,10 +136,13 @@ fun OcrSettingsContent(
     }
 
     // 등록 다이얼로그
-    if (showRegistrationDialog && uiState is OcrUiState.Success) {
-        val result = (uiState as OcrUiState.Success).result
+    if (showRegistrationDialog) {
+        val result = (uiState as? OcrUiState.Success)?.result
         Dialog(
-            onDismissRequest = { showRegistrationDialog = false },
+            onDismissRequest = { 
+                showRegistrationDialog = false
+                editingTemplateId = 0L
+            },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(modifier = Modifier.fillMaxSize(), color = Background) {
@@ -136,39 +152,52 @@ fun OcrSettingsContent(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("매칭 리스트 작성", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(if (editingTemplateId == 0L) "매칭 리스트 작성" else "템플릿 수정", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Row {
-                            TextButton(onClick = { showRegistrationDialog = false }) { Text("취소") }
+                            TextButton(onClick = { 
+                                showRegistrationDialog = false
+                                editingTemplateId = 0L
+                            }) { Text("취소") }
                             Button(
                                 onClick = { showTemplateNameDialog = true },
                                 enabled = registrationItems.isNotEmpty(),
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
-                            ) { Text("저장") }
+                            ) { Text(if (editingTemplateId == 0L) "저장" else "수정 완료") }
                         }
                     }
                     
                     Row(modifier = Modifier.weight(1f)) {
                         // 왼쪽: 이미지 피커
                         Box(modifier = Modifier.weight(1f)) {
-                            OcrImagePicker(
-                                title = "이미지에서 장비명 선택",
-                                imageUri = selectedImageUri,
-                                result = result,
-                                onPicked = { text ->
-                                    if (!registrationItems.any { it.rawText == text }) {
-                                        registrationItems.add(RegistrationItem(rawText = text))
+                            if (result != null) {
+                                OcrImagePicker(
+                                    title = "이미지에서 장비명 선택",
+                                    imageUri = selectedImageUri,
+                                    result = result,
+                                    onPicked = { text ->
+                                        if (!registrationItems.any { it.rawText == text }) {
+                                            registrationItems.add(RegistrationItem(rawText = text))
+                                        }
+                                    },
+                                    onCancel = { showRegistrationDialog = false }
+                                )
+                            } else {
+                                Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Icon(Icons.Default.ImageNotSupported, null, modifier = Modifier.size(48.dp), tint = MutedForeground)
+                                        Text("이미지 분석 데이터가 없습니다.", color = MutedForeground)
+                                        Text("목록 편집만 가능합니다.", fontSize = 12.sp, color = MutedForeground)
                                     }
-                                },
-                                onCancel = { showRegistrationDialog = false }
-                            )
+                                }
+                            }
                         }
                         
                         // 오른쪽: 매칭 리스트
-                        Column(modifier = Modifier.width(200.dp).fillMaxHeight().background(Surface).padding(8.dp)) {
-                            Text("선택된 목록 (인식 순서)", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.width(220.dp).fillMaxHeight().background(Surface).padding(8.dp)) {
+                            Text("매칭 목록 (순서대로 인식됨)", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 itemsIndexed(registrationItems) { index, item ->
                                     MatchingItemRow(
                                         index = index,
@@ -205,10 +234,11 @@ fun OcrSettingsContent(
                 Button(onClick = {
                     val ids = registrationItems.mapNotNull { it.equipmentId }
                     if (ids.isNotEmpty()) {
-                        ocrViewModel.saveTemplate(newTemplateName, ids)
+                        ocrViewModel.saveTemplate(newTemplateName, ids, editingTemplateId)
                         showTemplateNameDialog = false
                         showRegistrationDialog = false
                         newTemplateName = ""
+                        editingTemplateId = 0L
                     }
                 }) { Text("저장") }
             },
@@ -307,9 +337,11 @@ fun MatchingItemRow(
 }
 
 @Composable
-fun TemplateItem(template: OcrTemplate, onDelete: () -> Unit) {
+fun TemplateItem(template: OcrTemplate, onClick: () -> Unit, onDelete: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, Border)

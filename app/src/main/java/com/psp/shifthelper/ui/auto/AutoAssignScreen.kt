@@ -3,10 +3,14 @@ package com.psp.shifthelper.ui.auto
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -19,8 +23,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import com.psp.shifthelper.data.model.Equipment
+import com.psp.shifthelper.data.model.OcrTemplate
 import com.psp.shifthelper.data.model.Worker
 import com.psp.shifthelper.data.model.ShiftData
+import com.psp.shifthelper.ui.home.HomeViewModel
 import com.psp.shifthelper.ui.manage.ManageViewModel
 import com.psp.shifthelper.ui.theme.*
 import java.time.LocalDate
@@ -32,15 +38,14 @@ fun AutoAssignScreen(
     autoViewModel: AutoAssignViewModel = viewModel(),
     ocrViewModel: OcrViewModel = viewModel(),
     manageViewModel: ManageViewModel = viewModel(),
-    manualViewModel: ManualAssignViewModel = viewModel()
+    manualViewModel: ManualAssignViewModel = viewModel(),
+    homeViewModel: HomeViewModel = viewModel()
 ) {
     val currentStep by autoViewModel.currentStep.collectAsState()
     val attendance by autoViewModel.attendance.collectAsState()
     val otGroup by autoViewModel.otGroup.collectAsState()
     val assignState by autoViewModel.assignState.collectAsState()
-    val storedDates by autoViewModel.storedShiftDates.collectAsState()
     
-    // 설정 상태 보관 (saveable 적용하여 탭 이동 시 유지)
     var selectedDate by rememberSaveable { 
         mutableStateOf(LocalDate.now().format(DateTimeFormatter.ofPattern("MM.dd"))) 
     }
@@ -50,15 +55,16 @@ fun AutoAssignScreen(
     val workers by manageViewModel.workers.collectAsState()
     val ocrUiState by ocrViewModel.uiState.collectAsState()
     val manualState by manualViewModel.uiState.collectAsState()
+    val allEquipments by homeViewModel.equipments.collectAsState()
+    val templates by ocrViewModel.templates.collectAsState()
     val scope = rememberCoroutineScope()
     
-    // 기존 데이터 충돌 처리용 상태
     var showConflictDialog by remember { mutableStateOf(false) }
     var existingShiftData by remember { mutableStateOf<ShiftData?>(null) }
     var pendingOcrStates by remember { mutableStateOf<Map<Long, Boolean>>(emptyMap()) }
+    var showResultDialog by remember { mutableStateOf(false) }
 
     val recognizedDates = if (ocrUiState is OcrUiState.Success) (ocrUiState as OcrUiState.Success).result.recognizedDates else emptyList()
-    val recognizedShifts = if (ocrUiState is OcrUiState.Success) (ocrUiState as OcrUiState.Success).result.recognizedShifts else emptyList()
 
     Column(
         modifier = Modifier
@@ -70,149 +76,148 @@ fun AutoAssignScreen(
     ) {
         Text(text = "AUTO ASSIGN", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Foreground)
 
-        // STEP 1: 스케줄 이미지 인식 (이제 이게 첫 번째!)
+        // STEP 1: 스케줄 인식 및 정보 확정
         StepContainer(
             number = "01",
-            title = "스케줄 이미지 인식",
-            summary = "인식 완료",
+            title = "스케줄 인식 및 정보 확정",
+            summary = "$selectedDate / $selectedGroup 조 $selectedShift",
             isCompleted = currentStep > AssignStep.OCR_SCAN,
             onEdit = { autoViewModel.setStep(AssignStep.OCR_SCAN) }
         ) {
-            OcrSection(
-                selectedDate = selectedDate,
-                selectedShift = selectedShift,
-                onApplyToAssign = { result ->
-                    // OCR 결과 분석 후 다음 단계로
-                    autoViewModel.setStep(AssignStep.DATE_SHIFT)
-                },
-                ocrViewModel = ocrViewModel
-            )
-        }
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                OcrSection(
+                    selectedDate = selectedDate,
+                    selectedShift = selectedShift,
+                    onApplyToAssign = { },
+                    ocrViewModel = ocrViewModel
+                )
 
-        // STEP 2: 날짜 및 근무조 확정 (인식된 정보 기반 선택)
-        StepContainer(
-            number = "02",
-            title = "날짜 및 근무조 선택",
-            summary = "$selectedDate / $selectedGroup 조 $selectedShift",
-            isCompleted = currentStep > AssignStep.DATE_SHIFT,
-            onEdit = { autoViewModel.setStep(AssignStep.DATE_SHIFT) }
-        ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Surface)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("배정 날짜", fontSize = 12.sp, color = MutedForeground)
-                        DateSection(
-                            selectedDate = selectedDate,
-                            onDateSelected = { selectedDate = it },
-                            recognizedDates = recognizedDates,
-                            storedDates = storedDates
-                        )
-                        if (recognizedDates.isNotEmpty()) {
-                            Text("이미지에서 ${recognizedDates.size}개의 날짜가 인식되었습니다.", fontSize = 11.sp, color = StatusOk)
-                        }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("쉬프트 및 근무조", fontSize = 12.sp, color = MutedForeground)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // 인식된 쉬프트 정보를 우선 표시하거나 필터 칩으로 제공
-                            listOf("A", "B", "C", "D").forEach { group ->
-                                val isRecognized = recognizedShifts.any { it.contains(group) }
-                                FilterChip(
-                                    selected = selectedGroup == group,
-                                    onClick = { selectedGroup = group },
-                                    label = { Text("${group}조") },
-                                    colors = if (isRecognized) FilterChipDefaults.filterChipColors(containerColor = StatusOk.copy(alpha = 0.1f)) else FilterChipDefaults.filterChipColors()
-                                )
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("주간", "야간").forEach { shift ->
-                                val isRecognized = recognizedShifts.any { it.contains(shift) }
-                                FilterChip(
-                                    selected = selectedShift == shift,
-                                    onClick = { selectedShift = shift },
-                                    label = { Text(shift) },
-                                    colors = if (isRecognized) FilterChipDefaults.filterChipColors(containerColor = StatusOk.copy(alpha = 0.1f)) else FilterChipDefaults.filterChipColors()
-                                )
-                            }
-                        }
-                    }
-
-                    Button(
-                        onClick = { 
-                            if (ocrUiState is OcrUiState.Success) {
-                                val result = (ocrUiState as OcrUiState.Success).result
-                                val dateData = result.multiDateResults[selectedDate]
-                                val shiftKey = dateData?.keys?.find { it.contains(selectedShift) && it.contains(selectedGroup) } 
-                                              ?: dateData?.keys?.find { it.contains(selectedShift) }
-                                              ?: dateData?.keys?.firstOrNull()
-                                
-                                val states = dateData?.get(shiftKey) ?: result.equipmentStates
-                                pendingOcrStates = states
-
-                                // DB에 이미 저장된 데이터가 있는지 확인
-                                scope.launch {
-                                    val existing = autoViewModel.getExistingShiftData(selectedDate, selectedShift, selectedGroup)
-                                    if (existing != null) {
-                                        existingShiftData = existing
-                                        showConflictDialog = true
-                                    } else {
-                                        // 신규 저장 및 적용
-                                        autoViewModel.saveShiftData(selectedDate, selectedShift, selectedGroup, states)
-                                        autoViewModel.applyOcrResult(result.copy(equipmentStates = states))
-                                        proceedToNextStep(autoViewModel, selectedGroup)
+                if (ocrUiState is OcrUiState.Success) {
+                    val result = (ocrUiState as OcrUiState.Success).result
+                    
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = Surface)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("배정 날짜 선택", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                    recognizedDates.forEach { date ->
+                                        val isSelected = selectedDate == date
+                                        SelectionChip(
+                                            text = date,
+                                            isSelected = isSelected,
+                                            onClick = { selectedDate = date }
+                                        )
                                     }
                                 }
-                            } else {
-                                proceedToNextStep(autoViewModel, selectedGroup)
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
-                    ) {
-                        Text("정보 확정 - 다음 단계", fontWeight = FontWeight.Bold)
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("근무조 및 쉬프트 선택", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
+                                val dateData = result.multiDateResults[selectedDate]
+                                val availableShifts = dateData?.keys?.toList() ?: emptyList()
+                                
+                                if (availableShifts.isNotEmpty()) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                        availableShifts.forEach { shiftKey ->
+                                            val isSelected = (selectedShift + selectedGroup) == shiftKey || 
+                                                           (shiftKey.contains(selectedShift) && shiftKey.contains(selectedGroup))
+                                            
+                                            SelectionChip(
+                                                text = shiftKey,
+                                                isSelected = isSelected,
+                                                onClick = {
+                                                    // shiftKey가 "주간A" 형태라고 가정하고 분리 시도
+                                                    if (shiftKey.contains("주간")) selectedShift = "주간"
+                                                    else if (shiftKey.contains("야간")) selectedShift = "야간"
+                                                    
+                                                    listOf("A", "B", "C", "D").find { shiftKey.contains(it) }?.let {
+                                                        selectedGroup = it
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    // 기존 수동 선택 UI 유지 (인식된 데이터가 없을 경우 대비)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("A", "B", "C", "D").forEach { group ->
+                                            SelectionChip(
+                                                text = "${group}조",
+                                                isSelected = selectedGroup == group,
+                                                onClick = { selectedGroup = group }
+                                            )
+                                        }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf("주간", "야간").forEach { shift ->
+                                            SelectionChip(
+                                                text = shift,
+                                                isSelected = selectedShift == shift,
+                                                onClick = { selectedShift = shift }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = Border.copy(alpha = 0.3f))
+
+                            val dateData = result.multiDateResults[selectedDate]
+                            val shiftKey = dateData?.keys?.find { it.contains(selectedShift) && it.contains(selectedGroup) } 
+                                          ?: dateData?.keys?.find { it.contains(selectedShift) }
+                                          ?: dateData?.keys?.firstOrNull()
+                            val states = dateData?.get(shiftKey) ?: result.equipmentStates
+                            val runningCount = states.values.count { it }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column {
+                                    Text("가동 판정 결과", fontSize = 12.sp, color = MutedForeground)
+                                    Text("가동: ${runningCount}대 / 비가동: ${states.size - runningCount}대", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                                }
+                                OutlinedButton(
+                                    onClick = { showResultDialog = true },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("상세 확인 및 수정", fontSize = 11.sp)
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val existing = autoViewModel.getExistingShiftData(selectedDate, selectedShift, selectedGroup)
+                                        if (existing != null) {
+                                            existingShiftData = existing
+                                            pendingOcrStates = states
+                                            showConflictDialog = true
+                                        } else {
+                                            autoViewModel.saveShiftData(selectedDate, selectedShift, selectedGroup, states)
+                                            autoViewModel.applyOcrResult(result.copy(equipmentStates = states))
+                                            proceedToNextStep(autoViewModel, selectedGroup)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = StatusOk)
+                            ) {
+                                Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("검토 완료 - 인원 확인으로 이동", fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 충돌 다이얼로그 (기존 데이터 vs 이미지 데이터)
-        if (showConflictDialog && existingShiftData != null) {
-            AlertDialog(
-                onDismissRequest = { showConflictDialog = false },
-                title = { Text("기존 데이터 발견") },
-                text = { Text("${selectedDate} ${selectedGroup}조 ${selectedShift}의 저장된 데이터가 이미 존재합니다. 어떤 데이터를 사용하시겠습니까?") },
-                confirmButton = {
-                    Button(onClick = {
-                        // 기존 데이터 사용
-                        val result = (ocrUiState as OcrUiState.Success).result
-                        autoViewModel.applyOcrResult(result.copy(equipmentStates = existingShiftData!!.equipmentStates))
-                        showConflictDialog = false
-                        proceedToNextStep(autoViewModel, selectedGroup)
-                    }) { Text("기존 데이터 사용") }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        // 이미지(신규) 데이터 사용
-                        val result = (ocrUiState as OcrUiState.Success).result
-                        autoViewModel.saveShiftData(selectedDate, selectedShift, selectedGroup, pendingOcrStates)
-                        autoViewModel.applyOcrResult(result.copy(equipmentStates = pendingOcrStates))
-                        showConflictDialog = false
-                        proceedToNextStep(autoViewModel, selectedGroup)
-                    }) { Text("새로 인식된 이미지 사용") }
-                }
-            )
-        }
-
-        // STEP 3: 출근 인원 확인
+        // STEP 2: 출근 인원 확인
         StepContainer(
-            number = "03",
+            number = "02",
             title = "출근 인원 확인",
             summary = "출근 ${attendance.values.count { it }}명",
             isCompleted = currentStep > AssignStep.WORKER_CHECK,
@@ -231,7 +236,7 @@ fun AutoAssignScreen(
                     workers = workers.filter { it.group == otGroup }.sortedBy { it.displayOrder },
                     attendance = attendance,
                     onToggle = { autoViewModel.toggleAttendance(it) },
-                    onTitleClick = { /* 다른 조 선택 */ }
+                    onTitleClick = { }
                 )
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -256,9 +261,9 @@ fun AutoAssignScreen(
             }
         }
 
-        // STEP 4: 배정 결과 확인
+        // STEP 3: 배정 결과 확인
         StepContainer(
-            number = "04",
+            number = "03",
             title = "배정 결과 확인",
             summary = if (assignState is AssignUiState.Success) "배정 완료" else "진행 중",
             isCompleted = false,
@@ -300,6 +305,51 @@ fun AutoAssignScreen(
         }
         
         Spacer(modifier = Modifier.height(80.dp))
+    }
+
+    if (showResultDialog && ocrUiState is OcrUiState.Success) {
+        val result = (ocrUiState as OcrUiState.Success).result
+        val dateData = result.multiDateResults[selectedDate]
+        val shiftKey = dateData?.keys?.find { it.contains(selectedShift) && it.contains(selectedGroup) } 
+                      ?: dateData?.keys?.find { it.contains(selectedShift) }
+                      ?: dateData?.keys?.firstOrNull()
+        val currentStates = dateData?.get(shiftKey) ?: result.equipmentStates
+
+        OcrResultDialog(
+            result = result.copy(equipmentStates = currentStates),
+            imageUri = ocrViewModel.selectedImageUri.collectAsState().value,
+            allEquipments = allEquipments,
+            onDismiss = { showResultDialog = false },
+            onLearnAlias = { raw, id -> ocrViewModel.learnAlias(raw, id) },
+            onUpdateState = { id, run -> ocrViewModel.updateManualState(id, run) },
+            initialTab = 1, // 가동 판정 탭으로 시작
+            templates = templates
+        )
+    }
+
+    if (showConflictDialog && existingShiftData != null) {
+        AlertDialog(
+            onDismissRequest = { showConflictDialog = false },
+            title = { Text("기존 데이터 발견") },
+            text = { Text("$selectedDate ${selectedGroup}조 ${selectedShift}의 저장된 데이터가 이미 존재합니다. 어떤 데이터를 사용하시겠습니까?") },
+            confirmButton = {
+                Button(onClick = {
+                    val result = (ocrUiState as OcrUiState.Success).result
+                    autoViewModel.applyOcrResult(result.copy(equipmentStates = existingShiftData!!.equipmentStates))
+                    showConflictDialog = false
+                    proceedToNextStep(autoViewModel, selectedGroup)
+                }) { Text("기존 데이터 사용") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    val result = (ocrUiState as OcrUiState.Success).result
+                    autoViewModel.saveShiftData(selectedDate, selectedShift, selectedGroup, pendingOcrStates)
+                    autoViewModel.applyOcrResult(result.copy(equipmentStates = pendingOcrStates))
+                    showConflictDialog = false
+                    proceedToNextStep(autoViewModel, selectedGroup)
+                }) { Text("새로 인식된 이미지 사용") }
+            }
+        )
     }
 }
 
@@ -406,4 +456,43 @@ private fun proceedToNextStep(autoViewModel: AutoAssignViewModel, selectedGroup:
     }
     autoViewModel.initAttendance(selectedGroup, defaultOt)
     autoViewModel.setStep(AssignStep.WORKER_CHECK)
+}
+
+@Composable
+fun SelectionChip(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = if (isSelected) AccentBlue else SurfaceElevated,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, if (isSelected) AccentBlue else Border.copy(alpha = 0.5f)
+        ),
+        shadowElevation = if (isSelected) 4.dp else 0.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isSelected) {
+                Icon(
+                    Icons.Default.Check, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(14.dp), 
+                    tint = Color.White
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = text,
+                fontSize = 13.sp,
+                color = if (isSelected) Color.White else MutedForeground,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
+        }
+    }
 }

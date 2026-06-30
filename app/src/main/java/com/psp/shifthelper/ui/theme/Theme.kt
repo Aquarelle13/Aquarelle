@@ -1,10 +1,10 @@
 package com.psp.shifthelper.ui.theme
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
-private val DarkColorScheme = darkColorScheme(
+private val LightColorScheme = lightColorScheme(
     background = Background,
     surface = Surface,
     onBackground = Foreground,
@@ -20,7 +20,7 @@ fun PSPShiftHelperTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = DarkColorScheme,
+        colorScheme = LightColorScheme,
         typography = Typography,
         content = content
     )

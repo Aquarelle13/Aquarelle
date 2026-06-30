@@ -11,12 +11,7 @@ import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.GpuDelegate
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
+import java.util.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -47,10 +42,9 @@ data class OcrResult(
     val imageWidth: Int,
     val imageHeight: Int,
     val accuracy: Float,
-    // 다중 날짜/쉬프트 대응
     val recognizedDates: List<String> = emptyList(),
     val recognizedShifts: List<String> = emptyList(),
-    val multiDateResults: Map<String, Map<String, Map<Long, Boolean>>> = emptyMap() // Date -> Shift -> States
+    val multiDateResults: Map<String, Map<String, Map<Long, Boolean>>> = emptyMap()
 )
 
 class OcrService(private val context: Context) {
@@ -58,43 +52,6 @@ class OcrService(private val context: Context) {
     private val recognizer = TextRecognition.getClient(
         KoreanTextRecognizerOptions.Builder().build()
     )
-
-    private var tfliteInterpreter: Interpreter? = null
-
-    init {
-        try {
-            val options = Interpreter.Options()
-            // GPU delegate는 런타임에 라이브러리가 없을 수 있으므로 Throwable로 안전하게 감싼다
-            try {
-                options.addDelegate(GpuDelegate())
-            } catch (t: Throwable) {
-                // GPU delegate 클래스가 없거나 초기화 실패 시 CPU fallback
-                // 필요하면 로그 남기기:
-                t.printStackTrace()
-            }
-
-            // 모델 파일이 assets에 있다고 가정 (예: table_detector.tflite)
-            // loadModelFile("table_detector.tflite")?.let {
-            //     tfliteInterpreter = Interpreter(it, options)
-            // }
-        } catch (t: Throwable) {
-            // 기타 초기화 실패 방지
-            t.printStackTrace()
-        }
-    }
-
-    private fun loadModelFile(modelPath: String): ByteBuffer? {
-        return try {
-            val fileDescriptor = context.assets.openFd(modelPath)
-            val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-            val fileChannel = inputStream.channel
-            val startOffset = fileDescriptor.startOffset
-            val declaredLength = fileDescriptor.declaredLength
-            fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-        } catch (e: Exception) {
-            null
-        }
-    }
 
     suspend fun processImage(
         uri: Uri,
@@ -119,184 +76,190 @@ class OcrService(private val context: Context) {
             }
         }
 
-        // 1. 앵커 기반 행(Row) 그룹화
+        // 1. 단순화된 행(Row) 그룹화: 줄바꿈된 텍스트를 하나의 행으로 병합
         val rows = groupLinesIntoRows(allLines)
-        if (rows.size < 3) return@withContext createEmptyResult(visionText.text, image.width, image.height)
+        if (rows.isEmpty()) return@withContext createEmptyResult(visionText.text, image.width, image.height)
 
-        // 2. 날짜 앵커 추출 (1st Row)
-        val dateAnchors = extractDateAnchors(rows[0])
-        val recognizedDates = dateAnchors.map { it.text }
-        
-        // 3. 쉬프트/팀 앵커 추출 (2nd Row) - 날짜 앵커와 X축 매칭
-        val shiftAnchors = extractShiftAnchors(rows[1])
-        val dateShiftMap = mutableMapOf<String, List<String>>()
-        
-        dateAnchors.forEach { dateAnchor ->
-            val matchingShifts = shiftAnchors.filter { it.xRange.intersect(dateAnchor.xRange).isNotEmpty() || 
-                (it.xRange.first in dateAnchor.xRange) || (it.xRange.last in dateAnchor.xRange) }
-            dateShiftMap[dateAnchor.text] = matchingShifts.map { it.text }
+        // 2. 날짜 행 식별
+        var dateRowIndex = -1
+        val dateAnchors = mutableListOf<Anchor>()
+        for (i in 0 until minOf(rows.size, 5)) {
+            val row = rows[i]
+            val anchors = extractDateAnchors(row)
+            if (anchors.isNotEmpty()) {
+                dateRowIndex = i
+                dateAnchors.addAll(anchors.sortedBy { it.xCenter })
+                break
+            }
         }
 
-        val multiDateResults = mutableMapOf<String, MutableMap<String, MutableMap<Long, Boolean>>>()
+        if (dateRowIndex == -1) return@withContext createEmptyResult(visionText.text, image.width, image.height)
+
+        // 3. 쉬프트 행 식별 (날짜 행 바로 아래)
+        val shiftRowIndex = dateRowIndex + 1
+        val shiftRow = if (shiftRowIndex < rows.size) rows[shiftRowIndex] else emptyList()
+        val shiftAnchors = extractShiftAnchors(shiftRow).sortedBy { it.xCenter }
+
+        // 컬럼 경계 정의: 중앙 정렬 특성 활용
+        val dateColumns = defineColumns(dateAnchors, image.width)
+        val shiftColumns = defineColumns(shiftAnchors, image.width)
+
+        val multiResults = mutableMapOf<String, MutableMap<String, MutableMap<Long, Boolean>>>()
         val boundingBoxes = mutableMapOf<Long, Rect>()
         val matchedLines = mutableMapOf<Long, String>()
-        val uncertainEquipments = allEquipments.map { it.id }.toMutableSet()
+        val uncertainIds = allEquipments.map { it.id }.toMutableSet()
 
-        // 4. 장비 매칭 및 데이터 추출 (3rd Row부터)
-        val equipRows = rows.drop(2)
-        val activeTemplate = templates.firstOrNull() 
-        
-        equipRows.forEachIndexed { rowIndex, row ->
-            val equipLine = row.minByOrNull { it.boundingBox.left } ?: return@forEachIndexed
-            
-            val matchedEquipId = if (activeTemplate != null && rowIndex < activeTemplate.equipmentIds.size) {
-                activeTemplate.equipmentIds[rowIndex]
-            } else {
-                allEquipments.find { equip ->
-                    val hasAlias = aliases.filter { it.equipmentId == equip.id }.any { equipLine.text.contains(it.rawText, ignoreCase = true) }
-                    hasAlias || equipLine.text.contains(equip.code, ignoreCase = true)
-                }?.id
-            }
+        // 4. 장비 데이터 추출: 3번째 행(dateRowIndex + 2)부터 순서대로 매칭
+        val equipRows = rows.drop(dateRowIndex + 2)
+        val activeTemplate = templates.firstOrNull()
 
-            if (matchedEquipId != null) {
-                uncertainEquipments.remove(matchedEquipId)
-                boundingBoxes[matchedEquipId] = equipLine.boundingBox
-                
-                dateAnchors.forEach { dateAnchor ->
-                    val dateResult = multiDateResults.getOrPut(dateAnchor.text) { mutableMapOf() }
-                    val shifts = dateShiftMap[dateAnchor.text]?.ifEmpty { listOf("주간", "야간") } ?: listOf("주간", "야간")
+        if (activeTemplate != null) {
+            activeTemplate.equipmentIds.forEachIndexed { index, equipId ->
+                if (index < equipRows.size) {
+                    val row = equipRows[index]
                     
-                    val cellLine = row.find { it.boundingBox.centerX() in dateAnchor.xRange }
-                    val cellText = cellLine?.text ?: ""
-                    
-                    val (dayStatus, nightStatus) = parseCellStatus(cellText)
-                    
-                    shifts.forEach { shiftInfo ->
-                        val isDay = shiftInfo.contains("주간")
-                        val shiftResult = dateResult.getOrPut(shiftInfo) { mutableMapOf() }
-                        shiftResult[matchedEquipId] = if (isDay) dayStatus.isRunning else nightStatus.isRunning
+                    // 첫 번째 열 (장비명) - 날짜 첫 컬럼의 시작점 이전 텍스트들
+                    val firstColXLimit = dateColumns.firstOrNull()?.start ?: (image.width / 4)
+                    val nameLines = row.filter { it.boundingBox.centerX() < firstColXLimit }
+                    if (nameLines.isNotEmpty()) {
+                        uncertainIds.remove(equipId)
+                        boundingBoxes[equipId] = nameLines.first().boundingBox
+                        matchedLines[equipId] = nameLines.joinToString(" ") { it.text }
+                    }
+
+                    // 각 날짜/쉬프트 셀 데이터 추출
+                    dateColumns.forEach { dc ->
+                        val dateRes = multiResults.getOrPut(dc.text) { mutableMapOf() }
+                        
+                        // 현재 날짜 범위에 포함되는 쉬프트 컬럼들
+                        val scs = shiftColumns.filter { it.xCenter in dc.start..dc.end }
+                        
+                        if (scs.isNotEmpty()) {
+                            scs.forEach { sc ->
+                                val cellTxt = row.filter { it.boundingBox.centerX() in sc.start..sc.end }.joinToString("\n") { it.text }
+                                dateRes.getOrPut(sc.text) { mutableMapOf() }[equipId] = parseCellStatus(cellTxt).first.isRunning
+                            }
+                        } else {
+                            // 쉬프트 표시가 없으면 날짜 칸 전체를 하나의 데이터로
+                            val cellTxt = row.filter { it.boundingBox.centerX() in dc.start..dc.end }.joinToString("\n") { it.text }
+                            val (d, n) = parseCellStatus(cellTxt)
+                            dateRes.getOrPut("주간") { mutableMapOf() }[equipId] = d.isRunning
+                            dateRes.getOrPut("야간") { mutableMapOf() }[equipId] = n.isRunning
+                        }
                     }
                 }
             }
         }
 
-        val finalTargetDate = targetDate ?: recognizedDates.firstOrNull()
-        val finalTargetShift = targetShift
-        
-        val currentStates = if (finalTargetDate != null) {
-            val dateData = multiDateResults[finalTargetDate]
-            val shiftKey = dateData?.keys?.find { it.contains(finalTargetShift) } ?: dateData?.keys?.firstOrNull()
-            dateData?.get(shiftKey) ?: emptyMap()
-        } else emptyMap()
+        val finalDate = targetDate ?: dateAnchors.firstOrNull()?.text
+        val dData = multiResults[finalDate]
+        val sk = dData?.keys?.find { it.contains(targetShift) } ?: dData?.keys?.firstOrNull()
+        val finalStates = dData?.get(sk) ?: emptyMap()
 
         OcrResult(
             rawText = visionText.text,
-            date = finalTargetDate,
-            shiftInfo = null,
-            equipmentStates = currentStates,
+            date = finalDate,
+            equipmentStates = finalStates,
             details = emptyMap(),
             dayStates = emptyMap(),
             nightStates = emptyMap(),
-            uncertainEquipments = uncertainEquipments,
+            uncertainEquipments = uncertainIds,
             matchedLines = matchedLines,
             boundingBoxes = boundingBoxes,
             allDetectedLines = allLines,
             imageWidth = image.width,
             imageHeight = image.height,
-            accuracy = 0.9f,
-            recognizedDates = recognizedDates,
-            recognizedShifts = dateShiftMap.values.flatten().distinct(),
-            multiDateResults = multiDateResults
+            accuracy = 0.95f,
+            recognizedDates = dateAnchors.map { it.text },
+            recognizedShifts = shiftAnchors.map { it.text }.distinct(),
+            multiDateResults = multiResults
         )
     }
 
-    private fun createEmptyResult(rawText: String, w: Int, h: Int) = OcrResult(
-        rawText = rawText,
-        equipmentStates = emptyMap(),
-        details = emptyMap(),
-        dayStates = emptyMap(),
-        nightStates = emptyMap(),
-        uncertainEquipments = emptySet(),
-        matchedLines = emptyMap(),
-        boundingBoxes = emptyMap(),
-        allDetectedLines = emptyList(),
-        imageWidth = w,
-        imageHeight = h,
-        accuracy = 0f
-    )
+    // 텍스트 간격을 분석하여 행을 그룹화 (줄바꿈 병합 포함)
+    private fun groupLinesIntoRows(lines: List<OcrLine>): List<List<OcrLine>> {
+        if (lines.isEmpty()) return emptyList()
+        val sorted = lines.sortedBy { it.boundingBox.top }
+        val rows = mutableListOf<MutableList<OcrLine>>()
+        
+        var curRow = mutableListOf(sorted[0])
+        rows.add(curRow)
+        
+        for (i in 1 until sorted.size) {
+            val lastLine = curRow.maxBy { it.boundingBox.bottom }
+            val curLine = sorted[i]
+            
+            // 수직 간격이 글자 높이의 70% 이내면 같은 행(줄바꿈)으로 간주
+            val gap = curLine.boundingBox.top - lastLine.boundingBox.bottom
+            val rowHeight = curRow.map { it.boundingBox.height() }.average()
+            
+            if (gap < rowHeight * 0.7) {
+                curRow.add(curLine)
+            } else {
+                curRow = mutableListOf(curLine)
+                rows.add(curRow)
+            }
+        }
+        return rows.map { it.sortedBy { l -> l.boundingBox.left } }
+    }
 
-    data class Anchor(val text: String, val xRange: IntRange)
+    // 중앙 좌표를 기준으로 컬럼 영역 정의
+    private fun defineColumns(anchors: List<Anchor>, imgWidth: Int): List<ColumnRange> {
+        if (anchors.isEmpty()) return emptyList()
+        val sorted = anchors.sortedBy { it.xCenter }
+        return sorted.mapIndexed { i, a ->
+            val start = if (i == 0) a.xCenter - 50 else (sorted[i-1].xCenter + a.xCenter) / 2
+            val end = if (i == sorted.size - 1) imgWidth else (a.xCenter + sorted[i+1].xCenter) / 2
+            ColumnRange(a.text, start, end, a.xCenter)
+        }
+    }
 
     private fun extractDateAnchors(row: List<OcrLine>): List<Anchor> {
-        val datePattern = Regex("(\\d{1,2})[./월]\\s?(\\d{1,2})")
-        return row.mapNotNull { line ->
-            datePattern.find(line.text)?.let {
-                val month = it.groupValues[1].padStart(2, '0')
-                val day = it.groupValues[2].padStart(2, '0')
-                Anchor("$month.$day", line.boundingBox.left..line.boundingBox.right)
+        val pattern = Regex("(\\d{1,2})[./\\-월]\\s?(\\d{1,2})")
+        return row.flatMap { line ->
+            pattern.findAll(line.text).map { m ->
+                val charW = line.boundingBox.width().toFloat() / line.text.length.coerceAtLeast(1)
+                val centerX = line.boundingBox.left + ((m.range.first + m.range.last) / 2.0 * charW).toInt()
+                Anchor("${m.groupValues[1].padStart(2, '0')}.${m.groupValues[2].padStart(2, '0')}", centerX)
             }
         }
     }
 
     private fun extractShiftAnchors(row: List<OcrLine>): List<Anchor> {
-        val shiftPattern = Regex("(주간|야간)\\s?([A-D])?")
-        return row.mapNotNull { line ->
-            shiftPattern.find(line.text)?.let { 
-                Anchor(it.value, line.boundingBox.left..line.boundingBox.right)
+        val pattern = Regex("(주간|야간|주|야)\\s?([A-D])?")
+        return row.flatMap { line ->
+            pattern.findAll(line.text).map { m ->
+                var txt = m.value
+                if (txt.startsWith("주") && !txt.startsWith("주간")) txt = txt.replaceFirst("주", "주간")
+                else if (txt.startsWith("야") && !txt.startsWith("야간")) txt = txt.replaceFirst("야", "야간")
+                
+                val charW = line.boundingBox.width().toFloat() / line.text.length.coerceAtLeast(1)
+                val centerX = line.boundingBox.left + ((m.range.first + m.range.last) / 2.0 * charW).toInt()
+                Anchor(txt, centerX)
             }
         }
     }
-
-    private fun groupLinesIntoRows(lines: List<OcrLine>): List<List<OcrLine>> {
-        if (lines.isEmpty()) return emptyList()
-        val sortedLines = lines.sortedBy { it.boundingBox.top }
-        val rows = mutableListOf<MutableList<OcrLine>>()
-        
-        var currentY = sortedLines[0].boundingBox.centerY()
-        var currentRow = mutableListOf(sortedLines[0])
-        rows.add(currentRow)
-        
-        for (i in 1 until sortedLines.size) {
-            val line = sortedLines[i]
-            // 행 높이의 70% 이내면 같은 행으로 간주
-            if (abs(line.boundingBox.centerY() - currentY) < line.boundingBox.height() * 0.7) {
-                currentRow.add(line)
-            } else {
-                currentRow = mutableListOf(line)
-                rows.add(currentRow)
-                currentY = line.boundingBox.centerY()
-            }
-        }
-        return rows.map { it.sortedBy { line -> line.boundingBox.left } }
-    }
-
 
     private fun parseCellStatus(text: String): Pair<Status, Status> {
-        val partNumPattern = Regex("\\d{5,}-\\d+|\\d{7,}")
-        
-        fun getStatus(segment: String): Status {
-            val clean = segment.replace(" ", "")
-            val isOff = clean.contains("X", ignoreCase = true) || clean.contains("비가동") || clean.contains("정지")
-            val partNumber = partNumPattern.find(clean)?.value
-            val isRunning = !isOff && (partNumber != null || clean.length > 2)
-            return Status(isRunning, partNumber, if (segment.length > 10) segment else null)
+        val pNumRegex = Regex("\\d{5,}-\\d+|\\d{7,}")
+        fun getSt(s: String): Status {
+            val c = s.replace(" ", "")
+            val off = c.contains("X", true) || c.contains("비가동") || c.contains("정지")
+            val pn = pNumRegex.find(c)?.value
+            return Status(!off && (pn != null || c.length > 1), pn, if (s.length > 10) s else null)
         }
-
         return if (text.contains("/")) {
             val parts = text.split("/")
-            val day = getStatus(parts[0])
-            val night = if (parts.size > 1) getStatus(parts[1]) else day
-            Pair(day, night)
+            Pair(getSt(parts[0]), getSt(if (parts.size > 1) parts[1] else parts[0]))
         } else {
-            val status = getStatus(text)
-            Pair(status, status)
+            val st = getSt(text)
+            Pair(st, st)
         }
     }
 
+    private fun createEmptyResult(raw: String, w: Int, h: Int) = OcrResult(raw, equipmentStates = emptyMap(), details = emptyMap(), dayStates = emptyMap(), nightStates = emptyMap(), uncertainEquipments = emptySet(), matchedLines = emptyMap(), boundingBoxes = emptyMap(), allDetectedLines = emptyList(), imageWidth = w, imageHeight = h, accuracy = 0f)
+    
+    data class Anchor(val text: String, val xCenter: Int)
+    data class ColumnRange(val text: String, val start: Int, val end: Int, val xCenter: Int)
     data class Status(val isRunning: Boolean, val partNumber: String?, val memo: String?)
-
-    private fun calculateAccuracy(blockCount: Int, matchedCount: Int): Float {
-        if (blockCount == 0) return 0f
-        return minOf(0.98f, (matchedCount.toFloat() / maxOf(1, blockCount)) + 0.3f)
-    }
 }

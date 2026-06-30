@@ -95,11 +95,19 @@ class ManageViewModel(application: Application) : AndroidViewModel(application) 
     fun upsertWorker(worker: Worker) {
         viewModelScope.launch {
             val current = _workers.value.toMutableList()
-            val index = current.indexOfFirst { it.id == worker.id }
-            if (index >= 0) {
-                current[index] = worker
+            if (worker.id == 0L) {
+                // 신규 등록: 겹치지 않는 새 ID 생성
+                val nextId = (current.maxOfOrNull { it.id } ?: 0L) + 1L
+                val nextOrder = (current.maxOfOrNull { it.displayOrder } ?: -1) + 1
+                current.add(worker.copy(id = nextId, displayOrder = nextOrder))
             } else {
-                current.add(worker)
+                // 기존 수정
+                val index = current.indexOfFirst { it.id == worker.id }
+                if (index >= 0) {
+                    current[index] = worker
+                } else {
+                    current.add(worker)
+                }
             }
             _workers.value = current
             localDataSource.saveWorkers(current)

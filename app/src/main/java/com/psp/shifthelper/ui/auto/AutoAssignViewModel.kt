@@ -19,10 +19,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class AssignStep {
-    OCR_SCAN,      // Step 1: 스케줄 이미지 인식
-    DATE_SHIFT,    // Step 2: 날짜 및 근무조 확정
-    WORKER_CHECK,  // Step 3: 출근 인원 확인
-    RESULT         // Step 4: 배정 결과 확인
+    OCR_SCAN,      // Step 1: 스케줄 인식 및 정보 확정 (통합)
+    WORKER_CHECK,  // Step 2: 출근 인원 확인
+    RESULT         // Step 3: 배정 결과 확인
 }
 
 sealed class AssignUiState {

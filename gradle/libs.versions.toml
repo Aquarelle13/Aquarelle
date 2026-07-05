@@ -30,7 +30,7 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
-opencv-android = { group = "com.github.jeziellago", name = "opencv-android", version.ref = "opencv" }
+opencv-android = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

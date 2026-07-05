@@ -23,7 +23,6 @@ import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import java.security.MessageDigest
-import java.util.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -31,7 +30,7 @@ import kotlin.math.abs
 data class OcrLine(
     val text: String,
     val boundingBox: Rect,
-    val confidence: Float = 1.0f
+    val confidence: Float = 1.0f,
 )
 
 data class OcrDetail(
@@ -71,7 +70,7 @@ class OcrService(
 
     init {
         try {
-            if (!OpenCVLoader.initDebug()) {
+            if (!OpenCVLoader.initLocal()) {
                 // OpenCV initialization failed
             }
         } catch (e: Exception) {
@@ -238,7 +237,11 @@ class OcrService(
         val sortedEquipments = allEquipments.sortedBy { it.displayOrder }
         anchors.forEach { anchorText ->
             // 마스터 장비 목록에서 앵커 텍스트를 포함하는 장비의 기대 인덱스 찾기
-            val expectedIndex = sortedEquipments.indexOfFirst { it.name.contains(anchorText) || it.code.contains(anchorText) }
+            val expectedIndex = sortedEquipments.indexOfFirst { equip ->
+                equip.name.contains(anchorText) || 
+                equip.code.contains(anchorText) ||
+                aliases.any { it.equipmentId == equip.id && it.rawText.contains(anchorText) }
+            }
             if (expectedIndex != -1) {
                 val rowIdx = expectedIndex + 2 // Header 2개 제외
                 if (rowIdx < rows.size) {
@@ -273,7 +276,8 @@ class OcrService(
             val equipId = region.equipmentId
             val equip = allEquipments.find { it.id == equipId } ?: return@forEach
             
-            val (status, _) = parseCellStatus(recognizedText)
+            val (st1, st2) = parseCellStatus(recognizedText)
+            val status = if (targetShift.contains("야간")) st2 else st1
             equipmentStates[equipId] = status.isRunning
             
             val sim = findBestAliasMatch(recognizedText, equip, aliases).similarity
@@ -482,7 +486,7 @@ class OcrService(
         val pNumRegex = Regex("\\d{5,}-\\d+|\\d{7,}")
         fun getSt(s: String): Status {
             val c = s.replace(" ", "")
-            val off = c.contains("X", true) || c.contains("비가동") || c.contains("정지")
+            val off = c.contains("X", ignoreCase = true) || c.contains("비가동") || c.contains("정지")
             val pn = pNumRegex.find(c)?.value
             return Status(!off && (pn != null || c.length > 1), pn, if (s.length > 10) s else null)
         }

@@ -197,12 +197,16 @@ fun OcrSettingsContent(
                         Column(modifier = Modifier.width(220.dp).fillMaxHeight().background(Surface).padding(8.dp)) {
                             Text("매칭 목록 (순서대로 인식됨)", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
+                            
+                            val matchedIds = registrationItems.mapNotNull { it.equipmentId }.toSet()
+                            
                             LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 itemsIndexed(registrationItems) { index, item ->
                                     MatchingItemRow(
                                         index = index,
                                         item = item,
                                         allEquipments = allEquipments,
+                                        excludeIds = matchedIds,
                                         onRemove = { registrationItems.removeAt(index) },
                                         onEquipSelected = { id -> 
                                             registrationItems[index] = item.copy(equipmentId = id)
@@ -259,6 +263,7 @@ fun MatchingItemRow(
     index: Int,
     item: RegistrationItem,
     allEquipments: List<Equipment>,
+    excludeIds: Set<Long>,
     onRemove: () -> Unit,
     onEquipSelected: (Long) -> Unit
 ) {
@@ -293,12 +298,13 @@ fun MatchingItemRow(
                 Column(modifier = Modifier.padding(16.dp).heightIn(max = 500.dp)) {
                     Text("장비 선택 (알파벳/번호 순)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                     
-                    val sortedEquipments = remember(allEquipments) {
-                        allEquipments.sortedBy { it.code }
+                    val filteredEquipments = remember(allEquipments, excludeIds, item.equipmentId) {
+                        allEquipments.filter { it.id !in excludeIds || it.id == item.equipmentId }
+                            .sortedBy { it.code }
                     }
 
                     LazyColumn {
-                        items(sortedEquipments) { equip ->
+                        items(filteredEquipments) { equip ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

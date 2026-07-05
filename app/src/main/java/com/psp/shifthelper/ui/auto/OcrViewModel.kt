@@ -25,6 +25,7 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
     private val equipmentDao = app.database.equipmentDao()
     private val aliasDao = app.database.equipmentAliasDao()
     private val templateDao = app.database.ocrTemplateDao()
+    private val statusKeywordDao = app.database.statusKeywordDao()
     private val ocrService = OcrService(application, app.database.ocrCacheDao())
 
     private val _uiState = MutableStateFlow<OcrUiState>(OcrUiState.Idle)
@@ -36,16 +37,23 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
     val templates: StateFlow<List<OcrTemplate>> = templateDao.getAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun processImage(uri: Uri, date: String? = null, shift: String = "주간") {
+    val statusKeywords: StateFlow<List<com.psp.shifthelper.data.model.StatusKeyword>> = statusKeywordDao.getAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun processImage(uri: Uri, date: String? = null, shift: String = "주간", templateId: Long? = null) {
         _selectedImageUri.value = uri
         viewModelScope.launch {
             _uiState.value = OcrUiState.Loading
             try {
-                // Room 반복 조회 제거를 위해 DAO에서 직접 리스트를 가져오거나 Flow를 활용하도록 최적화
                 val allEquipments = equipmentDao.getAllList()
                 val aliases = aliasDao.getAll()
-                val currentTemplates = templates.value
-                val result = ocrService.processImage(uri, allEquipments, aliases, currentTemplates, date, shift)
+                val keywords = statusKeywordDao.getAllList()
+                val currentTemplates = if (templateId != null) {
+                    templates.value.filter { it.id == templateId }
+                } else {
+                    templates.value
+                }
+                val result = ocrService.processImage(uri, allEquipments, aliases, currentTemplates, keywords, date, shift)
                 _uiState.value = OcrUiState.Success(result)
             } catch (e: Exception) {
                 _uiState.value = OcrUiState.Error(
@@ -67,11 +75,20 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
     fun updateManualState(equipmentId: Long, isRunning: Boolean) {
         val currentState = _uiState.value
         if (currentState is OcrUiState.Success) {
-            val updatedMap = currentState.result.equipmentStates.toMutableMap()
+            val result = currentState.result
+            val updatedMap = result.equipmentStates.toMutableMap()
             updatedMap[equipmentId] = isRunning
             
+            // 사용자의 판정 결과를 키워드로 학습
+            val rawStatus = result.details[equipmentId]?.rawStatusText
+            if (rawStatus != null) {
+                viewModelScope.launch {
+                    statusKeywordDao.upsert(com.psp.shifthelper.data.model.StatusKeyword(rawStatus, isRunning, isLocked = true))
+                }
+            }
+
             _uiState.value = OcrUiState.Success(
-                currentState.result.copy(equipmentStates = updatedMap)
+                result.copy(equipmentStates = updatedMap)
             )
         }
     }
@@ -99,6 +116,18 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteTemplate(template: OcrTemplate) {
         viewModelScope.launch {
             templateDao.delete(template)
+        }
+    }
+
+    fun deleteStatusKeyword(keyword: com.psp.shifthelper.data.model.StatusKeyword) {
+        viewModelScope.launch {
+            statusKeywordDao.delete(keyword)
+        }
+    }
+
+    fun saveStatusKeyword(rawText: String, isRunning: Boolean) {
+        viewModelScope.launch {
+            statusKeywordDao.upsert(com.psp.shifthelper.data.model.StatusKeyword(rawText, isRunning, isLocked = true))
         }
     }
 }

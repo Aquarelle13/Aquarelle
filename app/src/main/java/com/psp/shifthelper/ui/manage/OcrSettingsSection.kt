@@ -44,9 +44,11 @@ fun OcrSettingsContent(
 ) {
     val allEquipments by homeViewModel.equipments.collectAsState()
     val templates by ocrViewModel.templates.collectAsState()
+    val statusKeywords by ocrViewModel.statusKeywords.collectAsState()
     val uiState by ocrViewModel.uiState.collectAsState()
     
     var showRegistrationDialog by remember { mutableStateOf(false) }
+    var showKeywordDialog by remember { mutableStateOf(false) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var editingTemplateId by remember { mutableLongStateOf(0L) }
     
@@ -90,17 +92,39 @@ fun OcrSettingsContent(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("장비명 목록 인식 및 등록", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("스케줄표의 장비명 열(Column)만 포함되도록 크롭하거나, 장비명이 잘 보이게 촬영하여 등록하세요. 인식된 순서대로 장비가 매칭됩니다.", fontSize = 12.sp, color = MutedForeground)
+                Text("스케줄표의 장비명 열(Column)만 포함되도록 크롭하거나, 장비명이 잘 보이게 촬영하여 등록하세요. 혹은 이미지 없이 수동으로 순서를 정할 수도 있습니다.", fontSize = 12.sp, color = MutedForeground)
                 
-                Button(
-                    onClick = { galleryLauncher.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
-                ) {
-                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { galleryLauncher.launch("image/*") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) {
+                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("이미지로 등록", fontSize = 13.sp)
+                    }
+
                     Spacer(Modifier.width(8.dp))
-                    Text("새 장비 리스트 등록 (이미지 선택)")
+
+                    OutlinedButton(
+                        onClick = {
+                            registrationItems.clear()
+                            selectedImageUri = null
+                            editingTemplateId = 0L
+                            newTemplateName = ""
+                            showRegistrationDialog = true
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("수동 순서 등록", fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -133,6 +157,55 @@ fun OcrSettingsContent(
                 }
             }
         }
+
+        // --- 추가된 판정 키워드 관리 섹션 ---
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("가동/비가동 판정 키워드", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MutedForeground)
+            TextButton(onClick = { showKeywordDialog = true }) {
+                Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("관리", fontSize = 12.sp)
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Surface)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (statusKeywords.isEmpty()) {
+                    Text("학습된 키워드가 없습니다. 인식 결과에서 수정하면 자동으로 저장됩니다.", fontSize = 11.sp, color = MutedForeground)
+                } else {
+                    val displayedKeywords = statusKeywords.take(3)
+                    displayedKeywords.forEach { kw ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(modifier = Modifier.size(8.dp).background(if (kw.isRunning) StatusOk else StatusError, RoundedCornerShape(2.dp)))
+                            Text(kw.rawText, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text(if (kw.isRunning) "가동" else "비가동", fontSize = 11.sp, color = if (kw.isRunning) StatusOk else StatusError)
+                        }
+                    }
+                    if (statusKeywords.size > 3) {
+                        Text("외 ${statusKeywords.size - 3}개의 키워드 더 있음...", fontSize = 11.sp, color = MutedForeground)
+                    }
+                }
+            }
+        }
+    }
+
+    // 키워드 관리 다이얼로그
+    if (showKeywordDialog) {
+        StatusKeywordDialog(
+            keywords = statusKeywords,
+            onDismiss = { showKeywordDialog = false },
+            onDelete = { ocrViewModel.deleteStatusKeyword(it) },
+            onSave = { raw, run -> ocrViewModel.saveStatusKeyword(raw, run) }
+        )
     }
 
     // 등록 다이얼로그
@@ -194,8 +267,23 @@ fun OcrSettingsContent(
                         }
                         
                         // 오른쪽: 매칭 리스트
-                        Column(modifier = Modifier.width(220.dp).fillMaxHeight().background(Surface).padding(8.dp)) {
-                            Text("매칭 목록 (순서대로 인식됨)", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
+                        Column(modifier = Modifier.width(280.dp).fillMaxHeight().background(Surface).padding(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("매칭 목록 (순서 중요)", fontSize = 12.sp, color = MutedForeground, fontWeight = FontWeight.Bold)
+                                TextButton(
+                                    onClick = { 
+                                        registrationItems.add(RegistrationItem(rawText = "수동 추가"))
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                                    Text("장비 추가", fontSize = 11.sp)
+                                }
+                            }
                             Spacer(Modifier.height(8.dp))
                             
                             val matchedIds = registrationItems.mapNotNull { it.equipmentId }.toSet()
@@ -205,13 +293,26 @@ fun OcrSettingsContent(
                                     MatchingItemRow(
                                         index = index,
                                         item = item,
+                                        isFirst = index == 0,
+                                        isLast = index == registrationItems.size - 1,
                                         allEquipments = allEquipments,
                                         excludeIds = matchedIds,
                                         onRemove = { registrationItems.removeAt(index) },
+                                        onMoveUp = {
+                                            val current = registrationItems[index]
+                                            registrationItems[index] = registrationItems[index - 1]
+                                            registrationItems[index - 1] = current
+                                        },
+                                        onMoveDown = {
+                                            val current = registrationItems[index]
+                                            registrationItems[index] = registrationItems[index + 1]
+                                            registrationItems[index + 1] = current
+                                        },
                                         onEquipSelected = { id -> 
                                             registrationItems[index] = item.copy(equipmentId = id)
-                                            // Alias도 즉시 학습
-                                            ocrViewModel.learnAlias(item.rawText, id)
+                                            if (item.rawText != "수동 추가") {
+                                                ocrViewModel.learnAlias(item.rawText, id)
+                                            }
                                         }
                                     )
                                 }
@@ -262,9 +363,13 @@ data class RegistrationItem(
 fun MatchingItemRow(
     index: Int,
     item: RegistrationItem,
+    isFirst: Boolean,
+    isLast: Boolean,
     allEquipments: List<Equipment>,
     excludeIds: Set<Long>,
     onRemove: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onEquipSelected: (Long) -> Unit
 ) {
     var showPicker by remember { mutableStateOf(false) }
@@ -274,20 +379,56 @@ fun MatchingItemRow(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = SurfaceElevated)
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${index + 1}. ${item.rawText}", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                Icon(Icons.Default.Close, null, modifier = Modifier.size(14.dp).clickable { onRemove() }, tint = MutedForeground)
+        Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 순서 조정 버튼
+            Column(verticalArrangement = Arrangement.Center) {
+                IconButton(
+                    onClick = onMoveUp,
+                    enabled = !isFirst,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(Icons.Default.ArrowDropUp, null, tint = if (isFirst) MutedForeground.copy(alpha = 0.3f) else Foreground)
+                }
+                IconButton(
+                    onClick = onMoveDown,
+                    enabled = !isLast,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(Icons.Default.ArrowDropDown, null, tint = if (isLast) MutedForeground.copy(alpha = 0.3f) else Foreground)
+                }
             }
             
-            Button(
-                onClick = { showPicker = true },
-                modifier = Modifier.fillMaxWidth().height(30.dp),
-                contentPadding = PaddingValues(0.dp),
-                shape = RoundedCornerShape(4.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (selectedEquip != null) StatusOk.copy(alpha = 0.1f) else Border, contentColor = if (selectedEquip != null) StatusOk else MutedForeground)
-            ) {
-                Text(selectedEquip?.code ?: "장비 매칭", fontSize = 11.sp)
+            Spacer(Modifier.width(4.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${index + 1}. ${if (item.rawText == "수동 추가") "직접 추가됨" else item.rawText}", 
+                        fontSize = 11.sp, 
+                        fontWeight = FontWeight.Bold, 
+                        maxLines = 1,
+                        color = if (item.rawText == "수동 추가") AccentBlue else Foreground
+                    )
+                    Icon(
+                        Icons.Default.Close, 
+                        null, 
+                        modifier = Modifier.size(16.dp).clickable { onRemove() }, 
+                        tint = StatusError.copy(alpha = 0.7f)
+                    )
+                }
+                
+                Button(
+                    onClick = { showPicker = true },
+                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    shape = RoundedCornerShape(4.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedEquip != null) StatusOk.copy(alpha = 0.1f) else Border, 
+                        contentColor = if (selectedEquip != null) StatusOk else MutedForeground
+                    )
+                ) {
+                    Text(selectedEquip?.code ?: "장비 선택", fontSize = 11.sp)
+                }
             }
         }
     }
@@ -361,6 +502,85 @@ fun TemplateItem(template: OcrTemplate, onClick: () -> Unit, onDelete: () -> Uni
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Outlined.Delete, null, tint = StatusError)
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusKeywordDialog(
+    keywords: List<com.psp.shifthelper.data.model.StatusKeyword>,
+    onDismiss: () -> Unit,
+    onDelete: (com.psp.shifthelper.data.model.StatusKeyword) -> Unit,
+    onSave: (String, Boolean) -> Unit
+) {
+    var newKeyword by remember { mutableStateOf("") }
+    var newIsRunning by remember { mutableStateOf(true) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Surface
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("판정 키워드 관리", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                
+                // 키워드 추가 영역
+                Card(colors = CardDefaults.cardColors(containerColor = SurfaceElevated)) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("새 키워드 등록", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        TextField(
+                            value = newKeyword,
+                            onValueChange = { newKeyword = it },
+                            placeholder = { Text("인식될 텍스트 (예: 정지, 00:00)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = newIsRunning, onClick = { newIsRunning = true })
+                                Text("가동", fontSize = 13.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = !newIsRunning, onClick = { newIsRunning = false })
+                                Text("비가동", fontSize = 13.sp)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Button(
+                                onClick = {
+                                    if (newKeyword.isNotBlank()) {
+                                        onSave(newKeyword.trim(), newIsRunning)
+                                        newKeyword = ""
+                                    }
+                                },
+                                shape = RoundedCornerShape(4.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                            ) { Text("추가", fontSize = 12.sp) }
+                        }
+                    }
+                }
+
+                // 키워드 목록
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(keywords) { kw ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(modifier = Modifier.size(10.dp).background(if (kw.isRunning) StatusOk else StatusError, RoundedCornerShape(2.dp)))
+                            Text(kw.rawText, modifier = Modifier.weight(1f), fontSize = 14.sp)
+                            Text(if (kw.isRunning) "가동" else "비가동", fontSize = 12.sp, color = if (kw.isRunning) StatusOk else StatusError)
+                            IconButton(onClick = { onDelete(kw) }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Delete, null, tint = StatusError, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        HorizontalDivider(thickness = 0.5.dp, color = Border.copy(alpha = 0.5f))
+                    }
+                }
+
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("닫기") }
             }
         }
     }

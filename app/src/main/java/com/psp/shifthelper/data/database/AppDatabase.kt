@@ -13,6 +13,7 @@ import com.psp.shifthelper.data.dao.EquipmentDao
 import com.psp.shifthelper.data.dao.OcrCacheDao
 import com.psp.shifthelper.data.dao.OcrTemplateDao
 import com.psp.shifthelper.data.dao.ShiftDataDao
+import com.psp.shifthelper.data.dao.StatusKeywordDao
 import com.psp.shifthelper.data.dao.WorkerDao
 import com.psp.shifthelper.data.model.Assignment
 import com.psp.shifthelper.data.model.AssignmentWeight
@@ -21,6 +22,7 @@ import com.psp.shifthelper.data.model.EquipmentAlias
 import com.psp.shifthelper.data.model.OcrCache
 import com.psp.shifthelper.data.model.OcrTemplate
 import com.psp.shifthelper.data.model.ShiftData
+import com.psp.shifthelper.data.model.StatusKeyword
 import com.psp.shifthelper.data.model.Worker
 
 @Database(
@@ -32,9 +34,10 @@ import com.psp.shifthelper.data.model.Worker
         EquipmentAlias::class,
         OcrTemplate::class,
         ShiftData::class,
-        OcrCache::class
+        OcrCache::class,
+        StatusKeyword::class
     ],
-    version = 6, // OcrCache 추가
+    version = 7, // StatusKeyword 추가
     exportSchema = false
 )
 @TypeConverters(RoomConverters::class)
@@ -47,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun ocrTemplateDao(): OcrTemplateDao
     abstract fun shiftDataDao(): ShiftDataDao
     abstract fun ocrCacheDao(): OcrCacheDao
+    abstract fun statusKeywordDao(): StatusKeywordDao
 
     companion object {
         @Volatile

@@ -5,11 +5,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Search
@@ -46,10 +49,17 @@ fun OcrSection(
     var showResultDialog by remember { mutableStateOf(false) }
     val templates by ocrViewModel.templates.collectAsState()
 
+    var showTemplateSelector by remember { mutableStateOf(false) }
+    var selectedTemplate by remember { mutableStateOf<OcrTemplate?>(null) }
+
     // 갤러리 런처 (날짜와 쉬프트 전달)
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> uri?.let { ocrViewModel.processImage(it, selectedDate, selectedShift) } }
+    ) { uri: Uri? -> 
+        uri?.let { 
+            ocrViewModel.processImage(it, selectedDate, selectedShift, selectedTemplate?.id) 
+        } 
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -58,6 +68,29 @@ fun OcrSection(
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SectionLabel("02", "스케줄 이미지 인식")
+
+            // 템플릿 선택기 추가
+            if (templates.isNotEmpty()) {
+                OutlinedCard(
+                    onClick = { showTemplateSelector = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.outlinedCardColors(containerColor = SurfaceElevated.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.List, null, modifier = Modifier.size(18.dp), tint = AccentBlue)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("사용할 매칭 템플릿 선택", fontSize = 11.sp, color = MutedForeground)
+                            Text(selectedTemplate?.name ?: "자동 매칭 (AI 검색)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Icon(Icons.Default.ArrowDropDown, null, tint = MutedForeground)
+                    }
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -138,6 +171,48 @@ fun OcrSection(
             onUpdateState = { id, run -> ocrViewModel.updateManualState(id, run) },
             initialTab = 0, // 인덱스 매칭 탭으로 시작
             templates = templates
+        )
+    }
+
+    if (showTemplateSelector) {
+        AlertDialog(
+            onDismissRequest = { showTemplateSelector = false },
+            title = { Text("매칭 템플릿 선택") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 기본 자동 매칭 옵션
+                    ListItem(
+                        headlineContent = { Text("자동 매칭 (AI 검색)") },
+                        supportingContent = { Text("인식된 글자로 장비를 자동으로 찾습니다.") },
+                        leadingContent = { RadioButton(selected = selectedTemplate == null, onClick = { 
+                            selectedTemplate = null
+                            showTemplateSelector = false
+                        }) },
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { 
+                            selectedTemplate = null
+                            showTemplateSelector = false
+                        }
+                    )
+                    
+                    templates.forEach { template ->
+                        ListItem(
+                            headlineContent = { Text(template.name) },
+                            supportingContent = { Text("장비 ${template.equipmentIds.size}개 순서 고정") },
+                            leadingContent = { RadioButton(selected = selectedTemplate?.id == template.id, onClick = { 
+                                selectedTemplate = template
+                                showTemplateSelector = false
+                            }) },
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { 
+                                selectedTemplate = template
+                                showTemplateSelector = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTemplateSelector = false }) { Text("닫기") }
+            }
         )
     }
 }

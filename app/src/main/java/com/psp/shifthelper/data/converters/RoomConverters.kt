@@ -26,4 +26,15 @@ class RoomConverters {
         val mapType = object : TypeToken<Map<Long, Boolean>>() {}.type
         return Gson().fromJson(value, mapType) ?: emptyMap()
     }
+
+    @TypeConverter
+    fun fromEquipmentRegionList(value: List<com.psp.shifthelper.data.model.EquipmentRegion>?): String {
+        return Gson().toJson(value)
+    }
+
+    @TypeConverter
+    fun toEquipmentRegionList(value: String): List<com.psp.shifthelper.data.model.EquipmentRegion> {
+        val listType = object : TypeToken<List<com.psp.shifthelper.data.model.EquipmentRegion>>() {}.type
+        return Gson().fromJson(value, listType) ?: emptyList()
+    }
 }

@@ -22,10 +22,10 @@ sealed class OcrUiState {
 class OcrViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as PSPApplication
-    private val localDataSource = app.localDataSource
+    private val equipmentDao = app.database.equipmentDao()
     private val aliasDao = app.database.equipmentAliasDao()
     private val templateDao = app.database.ocrTemplateDao()
-    private val ocrService = OcrService(application)
+    private val ocrService = OcrService(application, app.database.ocrCacheDao())
 
     private val _uiState = MutableStateFlow<OcrUiState>(OcrUiState.Idle)
     val uiState: StateFlow<OcrUiState> = _uiState
@@ -41,7 +41,8 @@ class OcrViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = OcrUiState.Loading
             try {
-                val allEquipments = localDataSource.loadEquipments()
+                // Room 반복 조회 제거를 위해 DAO에서 직접 리스트를 가져오거나 Flow를 활용하도록 최적화
+                val allEquipments = equipmentDao.getAllList()
                 val aliases = aliasDao.getAll()
                 val currentTemplates = templates.value
                 val result = ocrService.processImage(uri, allEquipments, aliases, currentTemplates, date, shift)

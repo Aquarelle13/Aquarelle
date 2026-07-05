@@ -75,6 +75,9 @@ dependencies {
     // Gson
     implementation("com.google.code.gson:gson:2.11.0")
 
+    // OpenCV
+    implementation(libs.opencv.android)
+
     // TensorFlow Lite
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")

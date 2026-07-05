@@ -9,6 +9,9 @@ interface EquipmentDao {
     @Query("SELECT * FROM equipment")
     fun getAll(): Flow<List<Equipment>>
 
+    @Query("SELECT * FROM equipment")
+    suspend fun getAllList(): List<Equipment>
+
     @Query("SELECT * FROM equipment WHERE id = :id")
     fun getById(id: Long): Flow<Equipment>
 
